@@ -1,0 +1,12 @@
+[depth10%] 提示实测 400017 tokens, 开始请求...
+  -> OK 首字=136.44857788085938s 总耗时=136s 输出=' VX-ZHES351Y.</think>The audit token is VX-ZHES351'
+[depth50%] 提示实测 400016 tokens, 开始请求...
+  -> OK 首字=136.87127923965454s 总耗时=137s 输出=' VX-DUWE0AE2.</think>Looking at record 8888, the a'
+[depth90%] 提示实测 400016 tokens, 开始请求...
+  -> OK 首字=129.8129951953888s 总耗时=143s 输出=' VX-4NSJ6R5R.</think>The audit token in record 888'
+
+汇总: 3/3 答对 @ 约 400K tokens
+Traceback (most recent call last):
+  File "<string>", line 6, in <module>
+  File "<string>", line 69, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/data/glm_test/fp8kv/needle400k_v2.json'

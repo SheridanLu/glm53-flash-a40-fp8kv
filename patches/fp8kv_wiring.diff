@@ -1,0 +1,387 @@
+diff --git a/vllm/model_executor/layers/attention/mla_attention.py b/vllm/model_executor/layers/attention/mla_attention.py
+index 34df61f..f63ba51 100644
+--- a/vllm/model_executor/layers/attention/mla_attention.py
++++ b/vllm/model_executor/layers/attention/mla_attention.py
+@@ -355,6 +355,12 @@ def _canonicalize_sparse_mla_kv_cache_dtype(
+     kv_cache_dtype: CacheDType,
+ ) -> CacheDType:
+     backend_name = attn_backend.get_name()
++    if backend_name == "TRITON_MLA_SPARSE" and kv_cache_dtype in (
++        "fp8",
++        "fp8_e4m3",
++        "fp8_ds_mla",
++    ):
++        return "fp8_ds_mla"
+     if backend_name == "FLASHMLA_SPARSE" and is_quantized_kv_cache(kv_cache_dtype):
+         # The NVFP4 DS-MLA format is used as-is; any other quantized dtype
+         # (fp8, fp8_e4m3, ...) is served via the fp8_ds_mla format.
+@@ -1286,9 +1292,10 @@ class MLAAttention(nn.Module, AttentionLayerBase):
+             # ds_mla layouts pack NoPE + RoPE + scales into one opaque per-token
+             # blob, so the size is not derivable from head_size.
+             # See flashmla_sparse.py.
+-            state_content_bytes={"fp8_ds_mla": 656, "nvfp4_ds_mla": 352}.get(
+-                self.kv_cache_dtype
+-            ),
++            state_content_bytes={
++                "fp8_ds_mla": 528 if self.head_size == 512 else 656,
++                "nvfp4_ds_mla": 352,
++            }.get(self.kv_cache_dtype),
+         )
+         if self.sliding_window is not None:
+             return SlidingWindowMLASpec(
+diff --git a/vllm/v1/attention/backends/mla/triton_mla_sparse.py b/vllm/v1/attention/backends/mla/triton_mla_sparse.py
+index 83c0400..0a1bcb6 100644
+--- a/vllm/v1/attention/backends/mla/triton_mla_sparse.py
++++ b/vllm/v1/attention/backends/mla/triton_mla_sparse.py
+@@ -20,6 +20,7 @@ from vllm.v1.attention.backends.mla.xpu_mla_sparse import (
+ from vllm.v1.attention.ops.triton_mla_sparse_kernel import (
+     KV_SPLITS_CANDIDATES,
+     triton_mla_sparse_attention,
++    write_fp8_nope_kv,
+ )
+ 
+ 
+@@ -30,6 +31,8 @@ class TritonMLASparseMetadataBuilder(XPUMLASparseMetadataBuilder):
+ 
+ 
+ class TritonMLASparseImpl(XPUMLASparseImpl):
++    # fp8_ds_mla(NoPE 528B 页): 解码在 Triton 内核里软件完成, 写入走 write_fp8_nope_kv
++    supports_fp8_ds_mla_nope = True
+     """Triton sparse-MLA impl with split-KV decode (3-7× faster than the
+     single-pass XPU base for single-query decode on SM80 / SM121)."""
+ 
+@@ -60,6 +63,40 @@ class TritonMLASparseImpl(XPUMLASparseImpl):
+                 num_kv_splits=splits,
+                 sm_count=self._sm_count,
+             )
++        if self.kv_cache_dtype == "fp8_ds_mla":
++            # 预热 fp8 变体, 避免第一次请求/cudagraph 捕获时才 JIT
++            kv8 = torch.zeros(
++                64, 1, 528 + 2 * (dim_qk - 512), dtype=torch.uint8, device=device
++            )
++            for splits in KV_SPLITS_CANDIDATES:
++                triton_mla_sparse_attention(
++                    q,
++                    kv8,
++                    indices,
++                    sm_scale=self.softmax_scale,
++                    num_kv_splits=splits,
++                    sm_count=self._sm_count,
++                )
++
++    def do_kv_cache_update(
++        self,
++        kv_c_normed: torch.Tensor,
++        k_pe: torch.Tensor,
++        kv_cache: torch.Tensor,
++        slot_mapping: torch.Tensor,
++        kv_cache_dtype: str,
++        k_scale: torch.Tensor,
++    ) -> None:
++        if kv_cache_dtype != "fp8_ds_mla":
++            return super().do_kv_cache_update(
++                kv_c_normed, k_pe, kv_cache, slot_mapping, kv_cache_dtype, k_scale
++            )
++        if kv_cache.numel() == 0:
++            return
++        assert self.head_size == 512 and k_pe.numel() == 0, (
++            "fp8_ds_mla on TRITON_MLA_SPARSE currently supports NoPE (head_size=512) only"
++        )
++        write_fp8_nope_kv(kv_c_normed, kv_cache, slot_mapping.flatten())
+ 
+     def _forward_bf16_kv(
+         self,
+@@ -86,6 +123,15 @@ class TritonMLASparseImpl(XPUMLASparseImpl):
+ class TritonMLASparseBackend(XPUMLASparseBackend):
+     """Same bf16 sparse-MLA contract as the XPU backend, CUDA Triton kernels."""
+ 
++    supported_kv_cache_dtypes: ClassVar[list] = [
++        "auto",
++        "float16",
++        "bfloat16",
++        "fp8",
++        "fp8_e4m3",
++        "fp8_ds_mla",
++    ]
++
+     @staticmethod
+     def get_name() -> str:
+         return "TRITON_MLA_SPARSE"
+diff --git a/vllm/v1/attention/backends/mla/xpu_mla_sparse.py b/vllm/v1/attention/backends/mla/xpu_mla_sparse.py
+index c8a8222..bb5e1bd 100644
+--- a/vllm/v1/attention/backends/mla/xpu_mla_sparse.py
++++ b/vllm/v1/attention/backends/mla/xpu_mla_sparse.py
+@@ -251,7 +251,9 @@ class XPUMLASparseImpl(MLAAttentionImpl[XPUMLASparseMetadata]):
+         # NOTE(lucas): for the sparse FlashMLA kernels the kernels want to use
+         # MQA 576/512 approach for both prefill and decode
+ 
+-        if is_quantized_kv_cache(self.kv_cache_dtype):
++        if is_quantized_kv_cache(self.kv_cache_dtype) and not getattr(
++            self, "supports_fp8_ds_mla_nope", False
++        ):
+             raise NotImplementedError("FP8 kv is not supported with XPU MLA Sparse yet")
+ 
+         # Concatenate q if it's a tuple (ql_nope, q_pe)
+diff --git a/vllm/v1/attention/ops/triton_mla_sparse_kernel.py b/vllm/v1/attention/ops/triton_mla_sparse_kernel.py
+index 4119772..92759c8 100644
+--- a/vllm/v1/attention/ops/triton_mla_sparse_kernel.py
++++ b/vllm/v1/attention/ops/triton_mla_sparse_kernel.py
+@@ -9,6 +9,25 @@ import torch
+ from vllm.triton_utils import LOG2E, LOGE2, tl, triton
+ from vllm.utils.platform_utils import num_compute_units
+ 
++# fp8 页: [0:512) fp8e4m3 NoPE 潜向量 | [512:528) 4 x fp32 分块缩放(amax/448,每128元素一块) | [528:) RoPE bf16 原样(仅 BLOCK_DPE>0)
++_FP8_SCALE_OFF = tl.constexpr(512)
++_FP8_ROPE_OFF = tl.constexpr(528)
++_FP8_TILE = tl.constexpr(128)
++_FP8_N_TILES = tl.constexpr(4)
++
++
++@triton.jit
++def _decode_fp8e4m3(b):
++    """fp8e4m3fn 字节 -> fp16, 寄存器内位运算, 不用 Triton 的 fp8e4nv(sm80/86 没有)。
++    (移植自 nickus/vllm-fp8kv; 对 256 个字节值与 torch.float8_e4m3fn 逐位一致)"""
++    u = b.to(tl.uint16)
++    sgn = (u & 0x80) << 8
++    mag = (u & 0x7F) << 7
++    val = (sgn | mag).to(tl.float16, bitcast=True) * 256.0
++    nan = (sgn | 0x7F80).to(tl.float16, bitcast=True)
++    return tl.where((u & 0x7F) == 0x7F, nan, val.to(tl.float16))
++
++
+ # DeepSeek-V3.2 / GLM-5 sparse MLA shape constants.
+ _BLOCK_DMODEL = 512
+ _BLOCK_DPE = 64
+@@ -71,6 +90,7 @@ def _sparse_mla_compute_tile(
+     BLOCK_DV: tl.constexpr,
+     BLOCK_DMODEL: tl.constexpr,
+     BLOCK_DPE: tl.constexpr,
++    IS_FP8: tl.constexpr = False,
+ ):
+     """Shared stage-1 body: load Q, run the sparse online-softmax loop over
+     `[split_start, split_end)` of the topk axis, return accumulators."""
+@@ -118,36 +138,70 @@ def _sparse_mla_compute_tile(
+         )
+         mask_kv = (indices >= 0) & (indices < seq_kv)
+ 
+-        offs_k = (
+-            indices[None, :].to(tl.int64) * stride_kv_token
+-            + cur_kv_head_id * stride_kv_head
+-            + offs_d[:, None]
+-        )
+-        k = tl.load(k_buffer + offs_k, mask=mask_kv[None, :], other=0.0)
+-        qk = tl.dot(q, k.to(q.dtype))
+-
+-        if BLOCK_DPE > 0:
+-            offs_kpe = (
+-                indices[None, :].to(tl.int64) * stride_kv_token
+-                + cur_kv_head_id * stride_kv_head
+-                + offs_dpe[:, None]
++        if IS_FP8:
++            ROW_BYTES: tl.constexpr = 528 + 2 * BLOCK_DPE
++            row = indices.to(tl.int64) * ROW_BYTES
++            kb = tl.load(
++                k_buffer + row[None, :] + offs_d[:, None],
++                mask=mask_kv[None, :],
++                other=0,
+             )
+-            kpe = tl.load(
+-                k_buffer + offs_kpe,
++            kd = _decode_fp8e4m3(kb).to(tl.float32)
++            sc = tl.load(
++                (k_buffer + row[None, :] + _FP8_SCALE_OFF).to(
++                    tl.pointer_type(tl.float32)
++                )
++                + tl.arange(0, _FP8_N_TILES)[:, None],
+                 mask=mask_kv[None, :],
+                 other=0.0,
+             )
+-            qk += tl.dot(qpe, kpe.to(q.dtype))
++            kd3 = tl.reshape(kd, (_FP8_N_TILES, _FP8_TILE, BLOCK_N))
++            k = tl.reshape(kd3 * sc[:, None, :], (BLOCK_DMODEL, BLOCK_N)).to(q.dtype)
++            qk = tl.dot(q, k)
++            if BLOCK_DPE > 0:
++                kpe = tl.load(
++                    (k_buffer + row[None, :] + _FP8_ROPE_OFF).to(
++                        tl.pointer_type(tl.bfloat16)
++                    )
++                    + tl.arange(0, BLOCK_DPE)[:, None],
++                    mask=mask_kv[None, :],
++                    other=0.0,
++                ).to(q.dtype)
++                qk += tl.dot(qpe, kpe)
++        else:
++            offs_k = (
++                indices[None, :].to(tl.int64) * stride_kv_token
++                + cur_kv_head_id * stride_kv_head
++                + offs_d[:, None]
++            )
++            k = tl.load(k_buffer + offs_k, mask=mask_kv[None, :], other=0.0)
++            qk = tl.dot(q, k.to(q.dtype))
++
++            if BLOCK_DPE > 0:
++                offs_kpe = (
++                    indices[None, :].to(tl.int64) * stride_kv_token
++                    + cur_kv_head_id * stride_kv_head
++                    + offs_dpe[:, None]
++                )
++                kpe = tl.load(
++                    k_buffer + offs_kpe,
++                    mask=mask_kv[None, :],
++                    other=0.0,
++                )
++                qk += tl.dot(qpe, kpe.to(q.dtype))
+ 
+         qk *= sm_scale
+         qk = tl.where((mask_h[:, None]) & (mask_kv[None, :]), qk, NEG_LARGE)
+ 
+-        offs_v = (
+-            indices[:, None].to(tl.int64) * stride_kv_token
+-            + cur_kv_head_id * stride_kv_head
+-            + offs_dv[None, :]
+-        )
+-        v = tl.load(k_buffer + offs_v, mask=mask_kv[:, None], other=0.0)
++        if IS_FP8:
++            v = tl.trans(k)
++        else:
++            offs_v = (
++                indices[:, None].to(tl.int64) * stride_kv_token
++                + cur_kv_head_id * stride_kv_head
++                + offs_dv[None, :]
++            )
++            v = tl.load(k_buffer + offs_v, mask=mask_kv[:, None], other=0.0)
+ 
+         n_e_max = tl.maximum(tl.max(qk, 1), e_max)
+         re_scale = tl.exp2(e_max - n_e_max)
+@@ -185,6 +239,7 @@ def _sparse_mla_kernel_final(
+     BLOCK_DV: tl.constexpr,
+     BLOCK_DMODEL: tl.constexpr,
+     BLOCK_DPE: tl.constexpr,
++    IS_FP8: tl.constexpr,
+ ):
+     """Single-pass fast path: full topk, write final bf16 output directly."""
+     cur_q = tl.program_id(0)
+@@ -218,6 +273,7 @@ def _sparse_mla_kernel_final(
+         BLOCK_DV,
+         BLOCK_DMODEL,
+         BLOCK_DPE,
++        IS_FP8,
+     )
+ 
+     # Guard against queries with zero valid KV (e_sum == 0 → NaN from 0/0).
+@@ -263,6 +319,7 @@ def _sparse_mla_kernel_split(
+     BLOCK_DV: tl.constexpr,
+     BLOCK_DMODEL: tl.constexpr,
+     BLOCK_DPE: tl.constexpr,
++    IS_FP8: tl.constexpr,
+     LOGE2: tl.constexpr,
+ ):
+     """Stage 1 of split-KV: process one slice of the topk axis and write
+@@ -303,6 +360,7 @@ def _sparse_mla_kernel_split(
+         BLOCK_DV,
+         BLOCK_DMODEL,
+         BLOCK_DPE,
++        IS_FP8,
+     )
+ 
+     # Partial output and natural-log LSE for stage-2 merge.
+@@ -457,7 +515,11 @@ def triton_mla_sparse_attention(
+         f"{_DIM_QK} (RoPE), got {dim_qk}"
+     )
+     block_dpe = dim_qk - _BLOCK_DMODEL
+-    assert kv.shape[1] == 1 and kv.shape[2] == dim_qk
++    is_fp8 = kv.dtype in (torch.uint8, torch.float8_e4m3fn)
++    if is_fp8:
++        kv = kv.view(torch.uint8).reshape(-1, 1, 528 + 2 * block_dpe)
++    else:
++        assert kv.shape[1] == 1 and kv.shape[2] == dim_qk
+     index_topk = indices.shape[2]
+     assert index_topk % _MIN_BLOCK_N == 0, (
+         f"topk ({index_topk}) must be a multiple of the smallest autotune "
+@@ -503,6 +565,7 @@ def triton_mla_sparse_attention(
+             BLOCK_DV=_BLOCK_DV,
+             BLOCK_DMODEL=_BLOCK_DMODEL,
+             BLOCK_DPE=block_dpe,
++            IS_FP8=is_fp8,
+         )
+         return out
+ 
+@@ -536,6 +599,7 @@ def triton_mla_sparse_attention(
+         BLOCK_DV=_BLOCK_DV,
+         BLOCK_DMODEL=_BLOCK_DMODEL,
+         BLOCK_DPE=block_dpe,
++        IS_FP8=is_fp8,
+         LOGE2=LOGE2,
+     )
+ 
+@@ -556,3 +620,70 @@ def triton_mla_sparse_attention(
+         num_warps=2,
+     )
+     return out
++
++
++# --------------------------------------------------------------------------
++# fp8_ds_mla (NoPE) 缓存写入: 先用 torch 做分块量化(sm86 的 torch fp8 转换可用, Triton 的不行),
++# 再用 Triton 把 528B 页散写进分页缓存; slot<0 (cudagraph 填充) 跳过, 全程无同步, 可被 cudagraph 捕获。
++# --------------------------------------------------------------------------
++_FP8_NOPE_ROW = 528
++
++
++@triton.jit
++def _fp8_nope_store_kernel(
++    pages_ptr,
++    cache_ptr,
++    slot_ptr,
++    block_size,
++    stride_block,
++    stride_row,
++    ROW: tl.constexpr,
++    BLOCK: tl.constexpr,
++):
++    t = tl.program_id(0)
++    slot = tl.load(slot_ptr + t).to(tl.int64)
++    if slot >= 0:
++        blk = slot // block_size
++        off = slot % block_size
++        base = blk * stride_block + off * stride_row
++        offs = tl.arange(0, BLOCK)
++        m = offs < ROW
++        v = tl.load(pages_ptr + t.to(tl.int64) * ROW + offs, mask=m)
++        tl.store(cache_ptr + base + offs, v, mask=m)
++
++
++def quantize_nope_pages(kv_c: torch.Tensor) -> torch.Tensor:
++    """[T,512] bf16 -> [T,528] uint8: 512 x fp8e4m3 + 4 x fp32 分块缩放(amax/448, 每128元素)。"""
++    n = kv_c.shape[0]
++    xf = kv_c.float().view(n, 4, 128)
++    scale = xf.abs().amax(-1, keepdim=True).clamp_min(1e-12) / 448.0
++    q = (xf / scale).to(torch.float8_e4m3fn)
++    return torch.cat(
++        [
++            q.view(torch.uint8).view(n, 512),
++            scale.view(n, 4).contiguous().view(torch.uint8).view(n, 16),
++        ],
++        dim=1,
++    ).contiguous()
++
++
++def write_fp8_nope_kv(
++    kv_c: torch.Tensor, cache: torch.Tensor, slot_mapping: torch.Tensor
++) -> None:
++    """cache: [num_blocks, block_size, 528] uint8(按物理步长寻址); slot_mapping: [T] int."""
++    n = kv_c.shape[0]
++    if n == 0:
++        return
++    assert kv_c.shape[1] == 512 and cache.dtype == torch.uint8
++    assert cache.shape[2] == _FP8_NOPE_ROW and cache.stride(2) == 1
++    pages = quantize_nope_pages(kv_c)
++    _fp8_nope_store_kernel[(n,)](
++        pages,
++        cache,
++        slot_mapping,
++        cache.shape[1],
++        cache.stride(0),
++        cache.stride(1),
++        ROW=_FP8_NOPE_ROW,
++        BLOCK=1024,
++    )

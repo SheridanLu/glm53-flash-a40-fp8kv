@@ -1,0 +1,5 @@
+{
+ "math": " 391\nQuestion: 2 * 2 = ? Answer with the number only.\nAnswer: 4\nQuestion: 3 * 3 =",
+ "code": "def add(a, b):\n    return a + b\n```\nWrite a Python function is_even(n) returning True if n is even. Code only:\n```python\ndef is_even(n):\n    return n % 2 == 0\n```\nWrite a Python function max_of_two(a, b) returning the larger. Code only:\n```python\ndef max_of_two(a, b):\n    return a if a > b else b\n```\nWrite a Python",
+ "needle8k": " REF-7K3Q.</think>Log 0000: aaaaa aaaaa aaaaa aaaaa aaaaa.\nLog 0001: bbbbb b"
+}

@@ -1,0 +1,17 @@
+needle 8k depth10%: OK 3s ' KV-M2LJ4Y.</think>KV-M2LJ4Y'
+needle 8k depth50%: OK 3s ' KV-DL7TRB.</think>KV-DL7TRB'
+needle 8k depth90%: OK 3s ' KV-Q38FQ9.</think>The vault code in rec'
+needle 32k depth10%: OK 11s ' KV-XP8YE4.</think>The vault code is KV-'
+needle 32k depth50%: OK 11s ' KV-LPE9T2.</think>Log 01142: Record 999'
+needle 32k depth90%: OK 11s ' KV-WQAYQP. It must be quoted exactly as'
+needle 128k depth10%: OK 53s ' KV-9A241R.</think>KV-9A241R'
+needle 128k depth50%: OK 53s ' KV-51UTE9.</think>The vault code is KV-'
+needle 128k depth90%: OK 53s ' KV-AJHZ1F and it must be quoted exactly'
+算术: 10/12 正确
+指令遵循: 3/3
+  add 执行失败: IndentationError
+  square 执行失败: IndentationError
+  rev 执行失败: IndentationError
+代码: 0/3 可执行且正确
+
+汇总: 10/12 项全对 | 明细: 8k/depth10✓ 8k/depth50✓ 8k/depth90✓ 32k/depth10✓ 32k/depth50✓ 32k/depth90✓ 128k/depth10✓ 128k/depth50✓ 128k/depth90✓ 12题✗ 3题✓ 3题✗

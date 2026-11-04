@@ -1,0 +1,20 @@
+glm53-flash-a40
+Copyright 2026 SheridanLu
+
+This repository contains derivative work of the following projects:
+
+- vLLM (https://github.com/vllm-project/vllm), Apache License 2.0.
+  patches/patched_tree.diff and patches/fp8kv_wiring.diff are modifications
+  of vLLM source files as shipped in the lazymio/vllm-backport v0.13.1 image.
+
+- nickus/vllm-fp8kv (https://github.com/nickus/vllm-fp8kv), Apache License 2.0.
+  The software FP8 decode technique and the `_decode_fp8e4m3` function in
+  patches/fp8kv_wiring.diff are adapted from that project's
+  patches/triton_mla_sparse_fp8.patch. This repository re-targets it to the
+  NoPE (qk_rope_head_dim = 0) layout (528-byte pages) and adds a write path.
+
+- wtdcode/vllm-backport (https://github.com/wtdcode/vllm-backport).
+  Runtime base image and model support for Ampere.
+
+Upstream vLLM pull requests (#56524, #56525 and others referenced in the
+README) are the work of their respective authors and are NOT redistributed here.
