@@ -57,25 +57,40 @@ GLM-5.3-Flash 是 320B 参数的 MoE,使用稀疏 MLA 注意力,且**没有 RoPE
 
 ## 快速开始
 
-> 需要 `lazymio/vllm-backport:v0.13.1-sm86` 镜像和 `wtdcode/GLM-5.3-Flash-AWQ-W4A16`。脚本里的路径(`/data/glm_test/...`)是我们机器上的,请自行替换。
+> 需要 `lazymio/vllm-backport:v0.13.1-sm86` 和 `wtdcode/GLM-5.3-Flash-AWQ-W4A16`。只在这个镜像上验证过。
+
+**A. Docker 镜像(推荐)。** 两个 diff 在构建时应用;任何一个打不上或缺标记,构建就失败;入口会拒绝启动半打补丁的树。
 
 ```bash
-# 1. 取出容器里 vllm 的 *.py 作为基线,然后应用
-git apply patches/patched_tree.diff      # #56525 + #56524 的手工移植(见 docs/design.md)
-git apply patches/fp8kv_wiring.diff      # 本仓库的 FP8 KV 改动(4 个文件)
+DOCKER_BUILDKIT=0 docker build -f docker/Dockerfile -t glm53-fp8kv:v0.13.1-sm86 .   # 旧式 builder,使用本地基础镜像
+docker run --gpus all --ipc=host -p 8000:8000 -v /path/to/GLM-5.3-Flash-AWQ-W4A16:/model:ro \
+  glm53-fp8kv:v0.13.1-sm86 /model --tensor-parallel-size 8 --kv-cache-dtype fp8_ds_mla \
+  --served-model-name glm-5.3-flash --max-model-len 524288 --enable-prefix-caching \
+  --disable-custom-all-reduce --reasoning-parser glm45 --tool-call-parser glm47 --enable-auto-tool-choice
+```
 
-# 2. 把改过的文件只读挂载覆盖容器里的包,并加上
-#       --kv-cache-dtype fp8_ds_mla
-bash scripts/run_glm_fp8kv.sh            # 校验 5 个标记,引擎起不来会自动回退
+**B. 给已有安装打补丁**(先备份,先在临时副本上干跑,可撤销):
 
-# 3. 测试(需要 GPU;脚本自带显存上限)
+```bash
+scripts/apply_patches.sh /usr/local/lib/python3.12/dist-packages --dry-run
+scripts/apply_patches.sh /usr/local/lib/python3.12/dist-packages
+scripts/apply_patches.sh /usr/local/lib/python3.12/dist-packages --revert
+```
+
+**C. 我们自己的机器**(没有 nvidia-container-toolkit,设备和驱动库手工传入):`scripts/launch_host_a40.sh`。
+
+**测试**(需要 GPU;脚本自带显存上限):
+
+```bash
 python3 tests/test_fp8kv_kernel.py
 python3 tests/test_fp8kv_write.py
 ```
 
+**打包状态。** 上面的 `docker run` 只是示例,没有原样运行过(我们的机器是手工传设备,不用 `--gpus all`)。无 GPU 条件下已核对:两个 diff 能从干净镜像逐字节还原线上正在跑的文件;镜像能构建;入口守卫会拒绝故意损坏的镜像(退出码 78)。**镜像还没有在 GPU 上启动过** —— 下面的 FP8 结果来自把同样的文件挂载进原版镜像。见 [`docs/validation.md`](docs/validation.md)。
+
 ## 局限
 
-1. **没有在真实文本上做同题的 BF16 与 FP8 对照**(困惑度或 logit 差)。精度数字是简单题集上的绝对通过率,BF16 大概也能满分,量不出 FP8 的代价。
+1. **还没有在真实文本上做同题的 BF16 与 FP8 对照**(困惑度或 logit 差)。精度数字是简单题集上的绝对通过率,BF16 大概也能满分,量不出 FP8 的代价。方案、事先写死的通过标准和评测脚本在 [`docs/ab-protocol.md`](docs/ab-protocol.md) 与 `tests/ab_eval.py`;**对照尚未运行**,无论结果如何都会补上。
 2. **内核误差是在合成高斯数据上测的。** 真实潜向量、11 个稀疏层的误差累积、INT4 权重叠加 FP8 KV,都没测。
 3. **金丝雀看不到长会话退化**(如 wtdcode/vllm-backport#119)。79 次运行中 0 次答错或串内容,但它只发短探针。
 4. **取消重试压力测试不具判别力**:未打补丁与打补丁后都是 0/36,且基线是 MTP 关闭。
@@ -87,11 +102,12 @@ python3 tests/test_fp8kv_write.py
 
 ```
 patches/    fp8kv_wiring.diff(本工作) · patched_tree.diff(线上 5 个文件相对 v0.13.1 的改动)
-scripts/    启动与自动回退、补丁干跑、移植辅助
-tests/      内核与写入路径测试、精度套件、针检索、压力测试、指标汇总
+docker/     Dockerfile 与入口(构建时打补丁,启动时校验标记)
+scripts/    apply_patches.sh、verify_markers.sh、launch_host_a40.sh、run_ab_window.sh(尚未端到端运行)、干跑与移植辅助
+tests/      内核与写入路径测试、精度套件、针检索、压力测试、指标汇总、ab_eval.py(A/B 评测)
 monitor/    glm_monitor.py —— 只读健康检查 + 两路并发金丝雀(cron 每 5 分钟)
 results/    上面每个数字背后的原始日志
-docs/       design.md · validation.md · 图
+docs/       design.md · validation.md · ab-protocol.md · 图
 ```
 
 ## 相关工作与致谢

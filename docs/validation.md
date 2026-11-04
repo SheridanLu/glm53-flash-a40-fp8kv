@@ -44,6 +44,42 @@ Real traffic on the FP8 instance (≈1,262 requests): mean per-request decode 63
 
 79 runs (06:55–13:25 UTC): 71 pass, 5 fail, 3 skipped. **All 5 failures were timeouts** during a window when the BF16 KV pool was exhausted; there were no wrong or mixed answers and no log errors. Raw: `results/status.log`, `results/alerts.log`.
 
+## Packaging checks (no GPU, 2026-11-04)
+
+Run on the host against the stock image; nothing touched the serving container.
+
+| Check | Result |
+|---|---|
+| Pristine files from `docker create` of the base image + `apply_patches.sh` → compare with the 9 files currently bind-mounted in production | **9/9 identical (sha256)** |
+| `apply_patches.sh` dry-run, apply, second run ("already patched"), `--revert` | all as expected; revert restores the original hashes (0 differences) |
+| Docker build (legacy builder, local base) | succeeds; patches apply, 10 markers present, all patched files `py_compile` |
+| 9 patched files inside the built image vs production | **9/9 identical** |
+| Negative control: corrupt a *removed* line in the diff | dry-run exits 1, pristine copy untouched |
+| Negative control: delete one marker from a patched tree | `verify_markers.sh` exits 1 and names the missing marker |
+| Negative control: apply only the first diff (half-patched) | `verify_markers.sh` exits 1 |
+| Negative control: image whose kernel file lost a marker | entrypoint exits **78** and prints the failing marker; the intact image passes the guard |
+
+Two of my first negative controls were wrong and are worth recording. (1) I corrupted an *added* line by appending a character to an identifier, which still contained the marker substring and applied cleanly, so it proved nothing; the control above corrupts a removed line instead. (2) I built the "broken image" with `docker commit` from a container started with `--entrypoint sh`, which saved that entrypoint into the image so my guard was never exercised (`sh: Illegal option`); the image is now committed with the entrypoint restored.
+
+**Not covered:** starting the image on a GPU.
+
+## A/B harness checks (2026-11-04)
+
+| Check | Result |
+|---|---|
+| `ab_eval.py selftest` | a lightly perturbed candidate PASSes; a candidate with shifted logprobs and flipped argmax tokens FAILs; a candidate with an 8-point MMLU drop FAILs |
+| `prompt_logprobs` parser on a real 12-token response from the engine | 11 positions scored, every position has a rank-1 entry, all logprobs ≤ 0 |
+| MMLU prompt format, 60 questions on the live FP8 instance | accuracy 0.867, predictions spread over A–D, 0 invalid |
+| Prompt set | 30 documents, 686,437 tokens (code and technical English, 4K–128K), 40 greedy prompts, 500 MMLU questions across 56 subjects; token counts checked with the server's tokenizer |
+
+Findings while preparing the harness:
+
+1. **The engine does not return token ids unless asked.** `prompt_token_ids` and `token_ids` are present but `null` by default; requests need `return_token_ids: true`. Without it the perplexity step would fail and greedy comparison would silently return nothing. Fixed.
+2. **`prompt_logprobs` on long prompts can exhaust memory.** It materialises chunk × vocabulary (~155K) logits on rank 0; with the production margin (≈2.9 GiB free per card, 8192-token chunks) that is unsafe, so the perplexity step runs only on a dedicated evaluation configuration (`--gpu-memory-utilization 0.80 --max-num-batched-tokens 2048`) and `ab_eval.py ppl` refuses to start without `AB_EVAL_SAFE=1`. The long-prompt call was **not** run against the production instance.
+3. **Greedy decoding is not reproducible under live traffic.** Two runs of the same four prompts on the same FP8 instance gave one identical continuation out of four, with the median first divergence at token 7. Greedy agreement between BF16 and FP8 would therefore be dominated by engine noise, so it is reported only beside its same-configuration noise floor and does not carry the verdict.
+
+**Not covered:** the comparison itself (`docs/ab-protocol.md`).
+
 ## Patch dry-run (13 upstream PRs vs v0.13.1 container sources)
 
 `scripts/dryrun.sh` extracts the container's `*.py` files, then runs `git apply --check` for each PR.
@@ -60,7 +96,7 @@ Four workers × nine cycles of a ≈40K-token prefix; the first request is abort
 
 ## What is not verified
 
-1. No same-prompt BF16 vs FP8 comparison on real text.
+1. No same-prompt BF16 vs FP8 comparison on real text (protocol and harness ready: `docs/ab-protocol.md`; not yet run).
 2. Kernel error is from synthetic data; real-latent behaviour and 11-layer accumulation are untested.
 3. Long-session degeneration (#119) is not detectable by this monitor.
 4. End-to-end cost of the non-fused quantise step is not isolated.

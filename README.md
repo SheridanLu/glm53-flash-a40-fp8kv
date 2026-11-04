@@ -61,25 +61,40 @@ Full method, raw numbers and the file each one comes from: [`docs/validation.md`
 
 ## Quick start
 
-> Requires the `lazymio/vllm-backport:v0.13.1-sm86` image and `wtdcode/GLM-5.3-Flash-AWQ-W4A16`. Paths in the scripts (`/data/glm_test/...`) are from our host; adjust them.
+> Requires `lazymio/vllm-backport:v0.13.1-sm86` and `wtdcode/GLM-5.3-Flash-AWQ-W4A16`. Verified against that exact image only.
+
+**A. Docker image (recommended).** The two diffs are applied at build time; the build fails if either does not apply or a marker is missing, and the entrypoint refuses to start a half-patched tree.
 
 ```bash
-# 1. Extract the container's vllm *.py files as the baseline, then apply
-git apply patches/patched_tree.diff      # #56525 + a hand-port of #56524 (see docs/design.md)
-git apply patches/fp8kv_wiring.diff      # this repo's FP8 KV change (4 files)
+DOCKER_BUILDKIT=0 docker build -f docker/Dockerfile -t glm53-fp8kv:v0.13.1-sm86 .   # legacy builder = uses the local base image
+docker run --gpus all --ipc=host -p 8000:8000 -v /path/to/GLM-5.3-Flash-AWQ-W4A16:/model:ro \
+  glm53-fp8kv:v0.13.1-sm86 /model --tensor-parallel-size 8 --kv-cache-dtype fp8_ds_mla \
+  --served-model-name glm-5.3-flash --max-model-len 524288 --enable-prefix-caching \
+  --disable-custom-all-reduce --reasoning-parser glm45 --tool-call-parser glm47 --enable-auto-tool-choice
+```
 
-# 2. Bind-mount the modified files read-only over the container's package and add
-#       --kv-cache-dtype fp8_ds_mla
-bash scripts/run_glm_fp8kv.sh            # verifies 5 markers, auto-rolls back if the engine does not come up
+**B. Patch an existing installation** (backs up first, dry-runs on a scratch copy, can be reverted):
 
-# 3. Test (needs a GPU; the scripts cap their own memory)
+```bash
+scripts/apply_patches.sh /usr/local/lib/python3.12/dist-packages --dry-run
+scripts/apply_patches.sh /usr/local/lib/python3.12/dist-packages
+scripts/apply_patches.sh /usr/local/lib/python3.12/dist-packages --revert
+```
+
+**C. Our host** (no nvidia-container-toolkit, devices and driver libraries passed by hand): `scripts/launch_host_a40.sh`.
+
+**Tests** (need a GPU; they cap their own memory):
+
+```bash
 python3 tests/test_fp8kv_kernel.py
 python3 tests/test_fp8kv_write.py
 ```
 
+**Packaging status.** The `docker run` line above is an example and has not been run verbatim (our host passes devices by hand instead of `--gpus all`). Checked without a GPU: the diffs reproduce the deployed files byte for byte from the pristine image; the image builds; the entrypoint guard rejects a deliberately broken image (exit 78). **The image has not yet been started on a GPU** — the FP8 results below come from the same files bind-mounted into the stock image. See [`docs/validation.md`](docs/validation.md).
+
 ## Limitations
 
-1. **No same-prompt BF16 vs FP8 comparison on real text** (perplexity or logit difference). The accuracy figures are absolute pass rates on an easy suite that BF16 would probably also ace; they cannot size the FP8 penalty.
+1. **No same-prompt BF16 vs FP8 comparison on real text yet** (perplexity or logit difference). The accuracy figures are absolute pass rates on an easy suite that BF16 would probably also ace; they cannot size the FP8 penalty. The protocol, pass criteria (fixed in advance) and harness are in [`docs/ab-protocol.md`](docs/ab-protocol.md) and `tests/ab_eval.py`; **the comparison has not been run**, and results will be added whatever they show.
 2. **Kernel error was measured on synthetic Gaussian data.** Real latents, error accumulation over 11 sparse layers and INT4-weights × FP8-KV compounding are untested.
 3. **The canary cannot see long-session degeneration** (e.g. wtdcode/vllm-backport#119). It found 0 wrong or cross-contaminated answers in 79 runs, but it only sends short probes.
 4. **The abort-and-retry stress test does not discriminate**: 0/36 failures both without and with the patch set, and the baseline ran with MTP off.
@@ -91,11 +106,12 @@ python3 tests/test_fp8kv_write.py
 
 ```
 patches/    fp8kv_wiring.diff (this work) · patched_tree.diff (deployed 5-file set vs v0.13.1)
-scripts/    launch + auto-rollback, patch dry-run, porting helpers
-tests/      kernel and write-path tests, accuracy suites, needle-in-haystack, stress, metrics summary
+docker/     Dockerfile + entrypoint (build-time patching, start-up marker guard)
+scripts/    apply_patches.sh, verify_markers.sh, launch_host_a40.sh, run_ab_window.sh (not yet run end to end), dry-run and porting helpers
+tests/      kernel and write-path tests, accuracy suites, needle-in-haystack, stress, metrics summary, ab_eval.py (A/B harness)
 monitor/    glm_monitor.py — read-only health + two-way concurrent canary (cron, every 5 min)
 results/    raw logs behind every number above
-docs/       design.md · validation.md · figures
+docs/       design.md · validation.md · ab-protocol.md · figures
 ```
 
 ## Related work and credits
