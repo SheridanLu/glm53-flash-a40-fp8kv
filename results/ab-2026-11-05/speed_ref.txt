@@ -1,0 +1,24 @@
+== 单流 短输出(约300 tok) ==
+  run1: decode 112.5 tok/s | 整体 109.0 tok/s | 258 tok | 首字 0.08s
+  run2: decode 124.2 tok/s | 整体 120.2 tok/s | 282 tok | 首字 0.08s
+  run3: decode 102.9 tok/s | 整体 100.0 tok/s | 270 tok | 首字 0.08s
+  run4: decode 120.6 tok/s | 整体 117.0 tok/s | 300 tok | 首字 0.09s
+== 单流 长输出(约1200 tok) ==
+  run1: decode 113.2 tok/s | 整体 112.3 tok/s | 928 tok | 首字 0.07s
+  run2: decode 109.0 tok/s | 整体 108.0 tok/s | 872 tok | 首字 0.09s
+  run3: decode 110.1 tok/s | 整体 109.0 tok/s | 854 tok | 首字 0.09s
+== 并发2 == 总吞吐 134 tok/s (2/2 成功, 墙钟 5.3s) | 每路 decode 中位 100.9, 最小 100.3 tok/s
+== 并发4 == 总吞吐 217 tok/s (4/4 成功, 墙钟 6.2s) | 每路 decode 中位 82.6, 最小 75.3 tok/s
+== 并发8 == 总吞吐 302 tok/s (8/8 成功, 墙钟 9.3s) | 每路 decode 中位 42.8, 最小 39.3 tok/s
+== 单流 短输出(约300 tok) ==
+  run1: decode 128.4 tok/s | 整体 124.6 tok/s | 253 tok | 首字 0.07s
+  run2: decode 127.6 tok/s | 整体 122.8 tok/s | 249 tok | 首字 0.08s
+  run3: decode 107.5 tok/s | 整体 103.9 tok/s | 245 tok | 首字 0.09s
+  run4: decode 124.4 tok/s | 整体 120.5 tok/s | 300 tok | 首字 0.09s
+== 单流 长输出(约1200 tok) ==
+  run1: decode 115.0 tok/s | 整体 113.9 tok/s | 901 tok | 首字 0.09s
+  run2: decode 104.4 tok/s | 整体 103.7 tok/s | 1125 tok | 首字 0.09s
+  run3: decode 109.3 tok/s | 整体 108.3 tok/s | 859 tok | 首字 0.09s
+== 并发2 == 总吞吐 198 tok/s (2/2 成功, 墙钟 3.5s) | 每路 decode 中位 104.8, 最小 101.8 tok/s
+== 并发4 == 总吞吐 297 tok/s (4/4 成功, 墙钟 4.6s) | 每路 decode 中位 82.5, 最小 75.0 tok/s
+== 并发8 == 总吞吐 367 tok/s (8/8 成功, 墙钟 7.6s) | 每路 decode 中位 54.0, 最小 48.5 tok/s

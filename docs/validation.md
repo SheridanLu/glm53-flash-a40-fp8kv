@@ -61,7 +61,7 @@ Run on the host against the stock image; nothing touched the serving container.
 
 Two of my first negative controls were wrong and are worth recording. (1) I corrupted an *added* line by appending a character to an identifier, which still contained the marker substring and applied cleanly, so it proved nothing; the control above corrupts a removed line instead. (2) I built the "broken image" with `docker commit` from a container started with `--entrypoint sh`, which saved that entrypoint into the image so my guard was never exercised (`sh: Illegal option`); the image is now committed with the entrypoint restored.
 
-**Not covered:** starting the image on a GPU.
+The image was later started on 8× A40 in both cache modes; see "A/B evaluation" below.
 
 ## A/B harness checks (2026-11-04)
 
@@ -78,7 +78,32 @@ Findings while preparing the harness:
 2. **`prompt_logprobs` on long prompts can exhaust memory.** It materialises chunk × vocabulary (~155K) logits on rank 0; with the production margin (≈2.9 GiB free per card, 8192-token chunks) that is unsafe, so the perplexity step runs only on a dedicated evaluation configuration (`--gpu-memory-utilization 0.80 --max-num-batched-tokens 2048`) and `ab_eval.py ppl` refuses to start without `AB_EVAL_SAFE=1`. The long-prompt call was **not** run against the production instance.
 3. **Greedy decoding is not reproducible under live traffic.** Two runs of the same four prompts on the same FP8 instance gave one identical continuation out of four, with the median first divergence at token 7. Greedy agreement between BF16 and FP8 would therefore be dominated by engine noise, so it is reported only beside its same-configuration noise floor and does not carry the verdict.
 
-**Not covered:** the comparison itself (`docs/ab-protocol.md`).
+The comparison itself is below.
+
+## A/B evaluation (2026-11-04, 16:11–16:45 UTC)
+
+Run by `scripts/run_ab_window.sh` on the production host with the public front door and the monitor cron paused; three restarts of the same image (BF16 evaluation configuration → FP8 evaluation configuration → FP8 production configuration, which was left serving). Full report: `results/ab-2026-11-05/report.md`; protocol and thresholds, fixed before data collection: `docs/ab-protocol.md`.
+
+| | |
+|---|---|
+| Verdict | **PASS, 14 of 14 pre-registered checks** |
+| Perplexity ratio (all / code / text) | 1.0002 / 0.9999 / 1.0005; CI upper end 1.0013 / 1.0014 / 1.0021 |
+| Top-1 agreement (BF16 vs FP8; BF16 vs BF16) | 0.9777; 0.9790 |
+| Mean abs change in log-probability | 0.0514; 0.0473 |
+| MMLU (500) | 0.870 → 0.860; 8 lost, 3 gained; McNemar p = 0.23; 0 invalid |
+| Greedy, identical continuations | 0.10 (BF16 vs FP8); 0.10 (BF16 vs BF16) |
+| KV pool, evaluation configuration | 728,108 → 1,349,597 tokens (1.853×) |
+| KV pool, production configuration (final) | 1,771,693 tokens, 3.38× at 512K |
+
+Deviations from the protocol as first written, all decided before any result was seen: the candidate (FP8) arm was run once instead of twice, to shorten the window; the cron monitor was paused for the window so its probes would not join the evaluation batches.
+
+Things worth knowing:
+
+- The window was the first time the image ran on a GPU. Both arms started in 290–300 s; periodic checks of the engine logs during each arm (`Traceback`, out-of-memory, illegal memory access) found nothing. The containers' logs were removed when the next arm started, so the full logs are not retained.
+- The BF16 run-to-run noise is large (2.1 % of positions change argmax, 0.047 nats mean change). FP8 sits just beyond it on both measures and far inside the pass limits.
+- Speed, same pass: FP8 / BF16 was 0.98 single-stream, 0.96–0.98 at 4 streams, 0.98–1.00 at 8 streams, 0.94–1.00 at 2 streams (one measurement per cell). The second pass had 22–48 % higher aggregate throughput than the first in both configurations (single-stream unchanged), so cold and warm numbers must not be mixed.
+- The driver reopened the front door the moment the final instance was healthy, before it was warm. I stopped the door again, ran `scripts/warmup.py` twice (first pass: 20K prefill 8.5 s, 65K prefill 30.7 s, mixed 9.4 s; second pass: 0.6 s, 0.9 s, 1.9 s; the second pass also benefits from prefix-cache hits on the same prompts, so JIT cost is not isolated), then reopened. `run_ab_window.sh` now warms the instance before reopening the door.
+- Not controlled: the second BF16 greedy run reused the prefix cache of the first run. `prompt_logprobs` requests recompute the whole prompt, so perplexity and agreement were unaffected.
 
 ## Patch dry-run (13 upstream PRs vs v0.13.1 container sources)
 
@@ -96,7 +121,7 @@ Four workers × nine cycles of a ≈40K-token prefix; the first request is abort
 
 ## What is not verified
 
-1. No same-prompt BF16 vs FP8 comparison on real text (protocol and harness ready: `docs/ab-protocol.md`; not yet run).
+1. The BF16 comparison covers one model, one GPU type and one corpus family; the token-level noise floor is high, so small effects are not resolvable (see A/B evaluation).
 2. Kernel error is from synthetic data; real-latent behaviour and 11-layer accumulation are untested.
 3. Long-session degeneration (#119) is not detectable by this monitor.
 4. End-to-end cost of the non-fused quantise step is not isolated.

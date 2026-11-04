@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="300" viewBox="0 0 760 300" role="img" aria-labelledby="a b" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"><title id="a">FP8 effect vs noise floor</title><desc id="b">Top-1 agreement 0.9790 for BF16 vs BF16 and 0.9777 for BF16 vs FP8.</desc><rect width="760" height="300" rx="10" fill="#fcfcfb" stroke="#e6e5e1"/>
+<text x="24" y="34" font-size="16" fill="#0b0b0b" font-weight="600" text-anchor="start">FP8 KV versus the engine&#x27;s own run-to-run noise</text>
+<text x="24" y="54" font-size="12" fill="#52514e" font-weight="400" text-anchor="start">BF16 run twice (same prompts, same engine) vs BF16 against FP8, 686,407 scored tokens</text>
+<text x="24" y="88" font-size="12" fill="#0b0b0b" font-weight="600" text-anchor="start">Top-1 token agreement (higher is better)</text>
+<line x1="230.0" y1="98" x2="230.0" y2="154" stroke="#e6e5e1"/>
+<text x="230.0" y="170" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">0.960</text>
+<line x1="347.5" y1="98" x2="347.5" y2="154" stroke="#e6e5e1"/>
+<text x="347.5" y="170" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">0.970</text>
+<line x1="465.0" y1="98" x2="465.0" y2="154" stroke="#e6e5e1"/>
+<text x="465.0" y="170" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">0.980</text>
+<line x1="582.5" y1="98" x2="582.5" y2="154" stroke="#e6e5e1"/>
+<text x="582.5" y="170" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">0.990</text>
+<line x1="700.0" y1="98" x2="700.0" y2="154" stroke="#e6e5e1"/>
+<text x="700.0" y="170" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">1.000</text>
+<line x1="347.5" y1="98" x2="347.5" y2="154" stroke="#eb6834" stroke-dasharray="4 3"/>
+<text x="351.5" y="108" font-size="11" fill="#eb6834" font-weight="400" text-anchor="start">pass limit 0.97</text>
+<text x="218" y="120" font-size="12" fill="#0b0b0b" font-weight="500" text-anchor="end">BF16 vs BF16 (noise floor)</text>
+<circle cx="453.5" cy="116" r="6" fill="#8a8985"/>
+<text x="465.5161354706464" y="120" font-size="12" fill="#0b0b0b" font-weight="600" text-anchor="start">0.9790</text>
+<text x="218" y="146" font-size="12" fill="#0b0b0b" font-weight="500" text-anchor="end">BF16 vs FP8</text>
+<circle cx="438.2" cy="142" r="6" fill="#eb6834"/>
+<text x="450.24676904518753" y="146" font-size="12" fill="#0b0b0b" font-weight="600" text-anchor="start">0.9777</text>
+<text x="24" y="200" font-size="12" fill="#0b0b0b" font-weight="600" text-anchor="start">Mean |change in log-probability| per token (lower is better)</text>
+<text x="218" y="223" font-size="12" fill="#0b0b0b" font-weight="500" text-anchor="end">BF16 vs BF16 (noise floor)</text>
+<path d="M230 208 h273.7 a4 4 0 0 1 4 4 v12 a4 4 0 0 1 -4 4 h-273.7 z" fill="#8a8985"/>
+<text x="515.6908855096484" y="223" font-size="12" fill="#0b0b0b" font-weight="600" text-anchor="start">0.0473</text>
+<text x="218" y="251" font-size="12" fill="#0b0b0b" font-weight="500" text-anchor="end">BF16 vs FP8</text>
+<path d="M230 236 h297.9 a4 4 0 0 1 4 4 v12 a4 4 0 0 1 -4 4 h-297.9 z" fill="#eb6834"/>
+<text x="539.9466558106606" y="251" font-size="12" fill="#0b0b0b" font-weight="600" text-anchor="start">0.0514</text>
+<text x="24" y="288" font-size="11" fill="#8a8985" font-weight="400" text-anchor="start">FP8 is slightly beyond the noise floor on both (agreement 0.0013 lower, change 0.0041 nats higher), far inside the pass limits. Source: report.json.</text>
+</svg>

@@ -1,6 +1,6 @@
 # A/B protocol: BF16 KV vs FP8 KV
 
-Status: **written before any BF16/FP8 comparison data was collected.** The thresholds below are the ones coded in `tests/ab_eval.py` (`THRESHOLDS`). Changing them after seeing results invalidates the verdict.
+Status: **written before any BF16/FP8 comparison data was collected; the comparison has since been run (PASS).** The thresholds below are the ones coded in `tests/ab_eval.py` (`THRESHOLDS`). Changing them after seeing results invalidates the verdict.
 
 ## Question
 
@@ -11,7 +11,7 @@ Does the NoPE FP8 KV cache change the model's outputs on real text by more than 
 - **One image, one flag.** Both arms run `glm53-fp8kv:v0.13.1-sm86`; the reference uses `--kv-cache-dtype auto` (BF16) and the candidate uses `--kv-cache-dtype fp8_ds_mla`. Everything else — weights, TP8, MTP-3, prefix caching, cudagraph sizes, `--max-model-len` — is identical, so the only difference is the cache dtype.
 - **Evaluation configuration.** `--gpu-memory-utilization 0.80 --max-num-batched-tokens 2048` for both arms. The `ppl` step asks the engine for logits at every prompt position (chunk × ~155K vocabulary, fp32, on rank 0); with the production margin (≈2.9 GiB free per card, 8192-token chunks) that can exhaust memory and crash the engine, so it is run only on this configuration. `ab_eval.py ppl` refuses to run unless `AB_EVAL_SAFE=1` is set.
 - **Same prompts, same order.** Prompts are generated once (`ab_eval.py prep`), hashed in `manifest.json`, and both arms read the same files. Token ids are hashed per document; a mismatch aborts the comparison.
-- **Noise floors.** Each arm is run twice. Reference-vs-reference and candidate-vs-candidate differences measure what the engine does to itself between runs (batch composition, kernel non-determinism). A candidate is judged against the reference *and* against that floor.
+- **Noise floor.** The reference arm is run twice; reference-vs-reference differences measure what the engine does to itself between runs (batch composition, kernel non-determinism). A candidate is judged against the reference *and* against that floor. The candidate arm is run once (decided before any data was collected, to shorten the window; a candidate-vs-candidate floor is not used by any pass criterion).
 - **No other traffic.** The public front door is stopped during evaluation so the eval is the only load. (Under live traffic, same-config greedy continuations already diverge by a median of token 7 in a 4-prompt check, so uncontrolled load would swamp the signal.)
 
 ## Data
@@ -57,4 +57,4 @@ Verdict: **PASS** if every check passes, **FAIL** if any fails, **INCOMPLETE** i
 
 ## Procedure
 
-`scripts/run_ab_window.sh` (needs `CONFIRM=yes`; stops the public front door, runs three restarts: BF16 eval config → FP8 eval config → FP8 production config, then restores the front door). Its trap restores service with the previous known-good launcher if any step fails. **The driver has not yet been run end to end**; its parts (patch application, image build, entrypoint guard, comparison logic, prompt generation, `prompt_logprobs` parsing, MMLU scoring) were tested separately, as recorded in `docs/validation.md`.
+`scripts/run_ab_window.sh` (needs `CONFIRM=yes`; stops the public front door, runs three restarts: BF16 eval config → FP8 eval config → FP8 production config, then restores the front door). Its trap restores service with the previous known-good launcher if any step fails. The driver ran end to end once on 2026-11-04 (16:11–16:45 UTC) and the result was PASS; see `docs/validation.md` ("A/B evaluation") and `results/ab-2026-11-05/`. Its parts were tested separately beforehand.

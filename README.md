@@ -17,7 +17,8 @@ GLM-5.3-Flash is a 320B-parameter MoE with sparse MLA attention and **no RoPE ta
 - **1.85× larger KV pool** on the same memory: 955,759 → 1,771,693 tokens; concurrent 512K-token requests go from 1.82× to 3.38×.
 - **528 B per token per layer** instead of 1024 B — a NoPE-specific page layout (the existing 656 B DeepSeek-style `fp8_ds_mla` page assumes a RoPE tail this model does not have).
 - **Runs on sm_86**: decoding is bit-math inside the Triton kernel, so it never needs `fp8e4nv`, which does not exist below sm_89.
-- **Needle retrieval 12/12** from 8K to 400K tokens on the FP8 cache; single-stream speed unchanged within measurement noise (107–110 tok/s).
+- **Same-prompt A/B against BF16 passes every pre-registered check**: perplexity ratio **1.0002** (95% CI 0.9993–1.0013) over 686,407 tokens of real code and English at 4K–128K; top-1 token agreement 0.9777 versus 0.9790 between two BF16 runs; MMLU (500 questions) 0.870 → 0.860, not significant (p = 0.23).
+- **Needle retrieval 12/12** from 8K to 400K tokens on the FP8 cache; on an idle host single-stream decode is within about 2 % of BF16 (see Results).
 - Ships with a **read-only canary monitor** and a **kernel/write-path test suite** (with negative controls that must fail).
 
 ![KV cache capacity](docs/img/kv-capacity.svg)
@@ -43,21 +44,63 @@ Details, including the failure modes we hit, are in [`docs/design.md`](docs/desi
 
 ## Results
 
-Measured on 8× A40 (46 GB), TP8, MTP-3, prefix caching, 512K context, `--gpu-memory-utilization 0.88`, 2026-11-04.
+Measured on 8× A40 (46 GB), TP8, MTP-3, prefix caching, 512K context.
 
-| | BF16 KV | FP8 KV |
-|---|---|---|
-| KV pool | 955,759 tokens | **1,771,693 tokens** |
-| 512K-request concurrency | 1.82× | **3.38×** |
-| Single stream | 85–124 tok/s (mean ≈107) | 107–110 tok/s |
-| 8 streams, aggregate | 259 tok/s | 289 tok/s ¹ |
-| Needle retrieval, 8K–400K × 3 depths | — | **12 / 12** |
-| Arithmetic / format / code (chat endpoint) | — | 12/12 · 3/3 · 3/3 |
-| Attention-output error (synthetic) | — | 1.3–3.2 % rel., cos 0.9995–0.9999 |
+**Capacity** (engine log `GPU KV cache size`)
 
-¹ The two runs had different background load; differences within ±12 % should not be read as a speed-up.
+| | BF16 KV | FP8 KV | ratio |
+|---|---|---|---|
+| Production configuration (`--gpu-memory-utilization 0.88`) | 955,759 tokens | **1,771,693 tokens** | 1.85× |
+| 512K-request concurrency | 1.82× | **3.38×** | |
+| Evaluation configuration (0.80, 2048-token chunks) | 728,108 tokens | 1,349,597 tokens | 1.853× |
 
-Full method, raw numbers and the file each one comes from: [`docs/validation.md`](docs/validation.md).
+**Speed, idle host, evaluation configuration, same image and only the cache flag changed** (`results/ab-2026-11-05/speed_*.txt`). Each benchmark was run twice in a row; in both configurations the second pass has **22–48 % higher aggregate throughput** at 2–8 streams (8 streams: 22–25 %) while single-stream decode is unchanged. The most likely cause is kernel JIT and prefix-cache hits (not isolated), so only numbers from the same pass are comparable.
+
+| | pass | BF16 KV | FP8 KV | FP8 / BF16 |
+|---|---|---|---|---|
+| Single stream, mean of 3 long outputs (tok/s) | 1 · cold | 110.8 | 108.7 | 0.98 |
+| | 2 · warm | 109.6 | 107.1 | 0.98 |
+| 4 streams, aggregate (tok/s) | 1 · cold | 217 | 212 | 0.98 |
+| | 2 · warm | 297 | 285 | 0.96 |
+| 8 streams, aggregate (tok/s) | 1 · cold | 302 | 295 | 0.98 |
+| | 2 · warm | 367 | 368 | 1.00 |
+
+FP8 is at most about 6 % slower in any cell (2 streams, warm: 198 vs 186), with one measurement per cell, so a difference of a few percent is not resolved.
+
+**Accuracy on the FP8 instance**
+
+| | |
+|---|---|
+| Needle retrieval, 8K–400K × 3 depths | **12 / 12** |
+| Arithmetic / format / code (chat endpoint) | 12/12 · 3/3 · 3/3 |
+| Attention-output error (synthetic data) | 1.3–3.2 % rel., cos 0.9995–0.9999 |
+
+### Same-prompt A/B against BF16
+
+Both arms ran the same image; the only difference was `--kv-cache-dtype auto` versus `fp8_ds_mla` (protocol and pass criteria, fixed beforehand: [`docs/ab-protocol.md`](docs/ab-protocol.md)). 30 documents (real Python source and technical English, 4K–128K tokens, 686,407 scored tokens), 40 greedy continuations, 500 MMLU questions. The BF16 arm was run twice to measure the engine's own run-to-run noise.
+
+| Metric | BF16 vs FP8 | BF16 vs BF16 (noise floor) | Pre-registered limit |
+|---|---|---|---|
+| Perplexity ratio, all (code · text) | **1.0002** (0.9999 · 1.0005) | 0.9997 | ≤ 1.01 |
+| 95% CI upper end | 1.0013 | | ≤ 1.02 |
+| Top-1 token agreement | 0.9777 | 0.9790 | ≥ 0.97, and within 0.02 of the floor |
+| Mean absolute change in log-probability | 0.0514 | 0.0473 | reported |
+| MMLU accuracy (500) | 0.870 → 0.860; lost 8 / gained 3, p = 0.23 | | drop ≤ 0.03 |
+| **Verdict** | **PASS (14 of 14 checks)** | | |
+
+![Perplexity ratio per group](docs/img/ab-ppl-ratio.svg)
+
+![FP8 versus the noise floor](docs/img/ab-noise-floor.svg)
+
+How to read this:
+
+- The pooled perplexity ratio is within about 0.1 % of 1.000 with a tight interval: averaged over this corpus, FP8 KV does not measurably change next-token likelihood.
+- **The engine is noisy against itself.** Two BF16 runs on identical prompts disagree on the argmax token at 2.1 % of positions and move the log-probability by 0.047 nats on average. FP8 sits just beyond that floor (agreement 0.0013 lower, change 0.0041 nats higher). So the test cannot resolve effects smaller than that run-to-run variation at the token level, and says nothing about them.
+- Two length groups have intervals just above 1.000 (code at 4K: 1.0016, code at 16K: 1.0012). They are not pass/fail rows, and with eleven groups we cannot tell a real +0.1 % from chance.
+- Greedy continuations are not informative: only 10 % are identical across BF16 and FP8, and also only 10 % across two BF16 runs (median first divergence at token 32 vs 47).
+- Not controlled: the second BF16 greedy run reused the prefix cache from the first (same prompts); `prompt_logprobs` requests recompute the whole prompt, so perplexity was unaffected.
+
+Raw per-token data (gzip) and the report are in [`results/ab-2026-11-05`](results/ab-2026-11-05).
 
 ## Quick start
 
@@ -90,27 +133,28 @@ python3 tests/test_fp8kv_kernel.py
 python3 tests/test_fp8kv_write.py
 ```
 
-**Packaging status.** The `docker run` line above is an example and has not been run verbatim (our host passes devices by hand instead of `--gpus all`). Checked without a GPU: the diffs reproduce the deployed files byte for byte from the pristine image; the image builds; the entrypoint guard rejects a deliberately broken image (exit 78). **The image has not yet been started on a GPU** — the FP8 results below come from the same files bind-mounted into the stock image. See [`docs/validation.md`](docs/validation.md).
+**Packaging status.** The `docker run` line above is an example; our host passes devices by hand instead of `--gpus all`. Checked without a GPU: the diffs reproduce the deployed files byte for byte from the pristine image; the image builds; the entrypoint guard rejects a deliberately broken image (exit 78). **Checked on 8× A40:** the built image started in both cache modes and ran the A/B evaluation above, and it now serves production. See [`docs/validation.md`](docs/validation.md).
 
 ## Limitations
 
-1. **No same-prompt BF16 vs FP8 comparison on real text yet** (perplexity or logit difference). The accuracy figures are absolute pass rates on an easy suite that BF16 would probably also ace; they cannot size the FP8 penalty. The protocol, pass criteria (fixed in advance) and harness are in [`docs/ab-protocol.md`](docs/ab-protocol.md) and `tests/ab_eval.py`; **the comparison has not been run**, and results will be added whatever they show.
-2. **Kernel error was measured on synthetic Gaussian data.** Real latents, error accumulation over 11 sparse layers and INT4-weights × FP8-KV compounding are untested.
-3. **The canary cannot see long-session degeneration** (e.g. wtdcode/vllm-backport#119). It found 0 wrong or cross-contaminated answers in 79 runs, but it only sends short probes.
-4. **The abort-and-retry stress test does not discriminate**: 0/36 failures both without and with the patch set, and the baseline ran with MTP off.
-5. The quantise step is torch ops plus a Triton scatter, not a fused kernel; its end-to-end cost was not isolated.
-6. Speed numbers come from runs with different background load (see footnote above).
-7. Image requests were not tested. The MTP draft model does not consume vision embeddings (engine warning).
+1. **The BF16 comparison covers one model, one GPU type, one corpus family.** The documents are real code and technical English, not agent transcripts; MMLU with 500 questions cannot resolve a one-point change.
+2. **The noise floor is high** (see above), so small token-level effects are not resolvable. The aggregate perplexity interval is tight, the per-position comparison is not.
+3. **The evaluation configuration differs from production** (`--gpu-memory-utilization 0.80`, 2048-token chunks, so that `prompt_logprobs` fits in memory); production uses 0.88 and 8192. The FP8 candidate was run once.
+4. **Kernel error was also measured on synthetic Gaussian data** (1.3–3.2 %); the A/B above is the real-text evidence. Error accumulation in very long agent sessions is not covered.
+5. **The canary cannot see long-session degeneration** (e.g. wtdcode/vllm-backport#119). It found 0 wrong or cross-contaminated answers in 79 runs, but it only sends short probes.
+6. **The abort-and-retry stress test does not discriminate**: 0/36 failures both without and with the patch set, and the baseline ran with MTP off.
+7. The quantise step is torch ops plus a Triton scatter, not a fused kernel; the idle-host speed table shows FP8 within about 6 % of BF16 end to end, but its own cost was not isolated.
+8. Image requests were not tested. The MTP draft model does not consume vision embeddings (engine warning).
 
 ## Repository layout
 
 ```
 patches/    fp8kv_wiring.diff (this work) · patched_tree.diff (deployed 5-file set vs v0.13.1)
 docker/     Dockerfile + entrypoint (build-time patching, start-up marker guard)
-scripts/    apply_patches.sh, verify_markers.sh, launch_host_a40.sh, run_ab_window.sh (not yet run end to end), dry-run and porting helpers
+scripts/    apply_patches.sh, verify_markers.sh, launch_host_a40.sh, run_ab_window.sh, warmup.py, dry-run and porting helpers
 tests/      kernel and write-path tests, accuracy suites, needle-in-haystack, stress, metrics summary, ab_eval.py (A/B harness)
 monitor/    glm_monitor.py — read-only health + two-way concurrent canary (cron, every 5 min)
-results/    raw logs behind every number above
+results/    raw logs behind every number above; ab-2026-11-05/ holds the A/B report and per-token data
 docs/       design.md · validation.md · ab-protocol.md · figures
 ```
 
