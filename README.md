@@ -102,7 +102,7 @@ docs/       design.md · validation.md · figures
 
 - [nickus/vllm-fp8kv](https://github.com/nickus/vllm-fp8kv) (Apache-2.0) — the software-dequant FP8 approach and the bit-exact decoder this work adapts to the NoPE layout.
 - [wtdcode/vllm-backport](https://github.com/wtdcode/vllm-backport) — the Ampere image and GLM-5.3-Flash support this runs on.
-- vLLM [#56524](https://github.com/vllm-project/vllm/pull/56524) / [#56525](https://github.com/vllm-project/vllm/pull/56525) (datacrystals) and the patch list posted by ehrhart in wtdcode/vllm-backport#119 — used for the patched set; **their diffs are not redistributed here**.
+- vLLM [#56524](https://github.com/vllm-project/vllm/pull/56524) / [#56525](https://github.com/vllm-project/vllm/pull/56525) (datacrystals) and the patch list posted by ehrhart in wtdcode/vllm-backport#119 — used for the patched set. `patches/patched_tree.diff` contains the **net effect** of #56525 and a hand-port of #56524 against v0.13.1 (vLLM is Apache-2.0; the authors are credited here). The other PRs from that list were only dry-run, not applied, and are not included.
 - vLLM RFCs [#48374](https://github.com/vllm-project/vllm/issues/48374) and [#59016](https://github.com/vllm-project/vllm/issues/59016) — the upstream discussion of FP8 KV on Ampere sparse MLA.
 
 ## Maintainer

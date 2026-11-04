@@ -98,7 +98,7 @@ docs/       design.md · validation.md · 图
 
 - [nickus/vllm-fp8kv](https://github.com/nickus/vllm-fp8kv)(Apache-2.0)—— 软件反量化 FP8 的思路与逐位一致的解码器,本工作将其改写为 NoPE 布局。
 - [wtdcode/vllm-backport](https://github.com/wtdcode/vllm-backport) —— 本工作运行所基于的 Ampere 镜像与 GLM-5.3-Flash 支持。
-- vLLM [#56524](https://github.com/vllm-project/vllm/pull/56524) / [#56525](https://github.com/vllm-project/vllm/pull/56525)(datacrystals),以及 ehrhart 在 wtdcode/vllm-backport#119 中给出的补丁清单 —— 用于补丁集;**其 diff 不在本仓库重新发布**。
+- vLLM [#56524](https://github.com/vllm-project/vllm/pull/56524) / [#56525](https://github.com/vllm-project/vllm/pull/56525)(datacrystals),以及 ehrhart 在 wtdcode/vllm-backport#119 中给出的补丁清单 —— 用于补丁集。`patches/patched_tree.diff` 包含 #56525 的**净改动**和对 #56524 的手工移植(针对 v0.13.1;vLLM 为 Apache-2.0,作者在此署名);该清单里的其余 PR 只做了干跑,没有应用,也不在本仓库中。
 - vLLM RFC [#48374](https://github.com/vllm-project/vllm/issues/48374)、[#59016](https://github.com/vllm-project/vllm/issues/59016) —— 上游关于 Ampere 稀疏 MLA FP8 KV 的讨论。
 
 ## 维护者

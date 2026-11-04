@@ -16,5 +16,7 @@ This repository contains derivative work of the following projects:
 - wtdcode/vllm-backport (https://github.com/wtdcode/vllm-backport).
   Runtime base image and model support for Ampere.
 
-Upstream vLLM pull requests (#56524, #56525 and others referenced in the
-README) are the work of their respective authors and are NOT redistributed here.
+patches/patched_tree.diff additionally contains the net effect of upstream vLLM pull requests
+#56525 (state-block commit fence) and a hand-port of #56524 (zero Mamba state blocks on allocation),
+authored by datacrystals and contributed to vLLM under the Apache License 2.0. Other pull requests
+referenced in the README were only dry-run and are not included.
