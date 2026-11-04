@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="262" viewBox="0 0 760 262" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="t">KV row layout</title><desc id="d">A BF16 row is 1024 bytes. The FP8 row is 512 bytes of fp8 plus 16 bytes of scales, 528 bytes total.</desc>
+<rect width="760" height="262" rx="10" fill="#fcfcfb" stroke="#e6e5e1"/>
+<text x="24" y="34" font-size="16" fill="#0b0b0b" font-weight="600" text-anchor="start">KV row layout per token per layer (NoPE sparse MLA)</text>
+<text x="24" y="54" font-size="12" fill="#52514e" font-weight="400" text-anchor="start">GLM-5.3-Flash has qk_rope_head_dim = 0, so a row is 512 latent values, not 576</text>
+<text x="136" y="104" font-size="13" fill="#0b0b0b" font-weight="500" text-anchor="end">BF16</text>
+<rect x="150" y="82" width="570.0" height="34" rx="4" fill="#2a78d6"/>
+<text x="162" y="104" font-size="13" fill="#ffffff" font-weight="600" text-anchor="start">512 x bf16  =  1024 B</text>
+<text x="136" y="164" font-size="13" fill="#0b0b0b" font-weight="500" text-anchor="end">FP8 (this repo)</text>
+<rect x="150" y="142" width="285.0" height="34" rx="4" fill="#eb6834"/>
+<text x="162" y="164" font-size="13" fill="#ffffff" font-weight="600" text-anchor="start">512 x fp8e4m3  =  512 B</text>
+<rect x="437.0" y="142" width="8.90625" height="34" rx="4" fill="#52514e"/>
+<line x1="441.453125" y1="178" x2="441.453125" y2="194" stroke="#52514e"/>
+<text x="449.453125" y="208" font-size="12" fill="#52514e" font-weight="400" text-anchor="start">4 x fp32 scales, one per 128 values  =  16 B</text>
+<text x="475.0" y="164" font-size="13" fill="#0b0b0b" font-weight="600" text-anchor="start">528 B total  (1.94x smaller)</text>
+<text x="24" y="246" font-size="11" fill="#8a8985" font-weight="400" text-anchor="start">DeepSeek-style fp8_ds_mla pages are 656 B because they keep a 64-dim bf16 RoPE tail; a NoPE model has none.</text>
+</svg>

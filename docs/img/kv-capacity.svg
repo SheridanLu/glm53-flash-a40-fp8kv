@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="250" viewBox="0 0 760 250" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="t">KV cache capacity</title><desc id="d">BF16 KV holds 955,759 tokens, FP8 KV holds 1,771,693 tokens.</desc>
+<rect width="760" height="250" rx="10" fill="#fcfcfb" stroke="#e6e5e1"/>
+<text x="24" y="34" font-size="16" fill="#0b0b0b" font-weight="600" text-anchor="start">KV cache capacity on 8x A40</text>
+<text x="24" y="54" font-size="12" fill="#52514e" font-weight="400" text-anchor="start">tokens in the paged KV pool, same GPU memory budget (11.53 GiB per card)</text>
+<line x1="150.0" y1="76" x2="150.0" y2="184" stroke="#e6e5e1"/>
+<text x="150.0" y="202" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">0</text>
+<line x1="259.61538461538464" y1="76" x2="259.61538461538464" y2="184" stroke="#e6e5e1"/>
+<text x="259.61538461538464" y="202" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">0.5M</text>
+<line x1="369.2307692307692" y1="76" x2="369.2307692307692" y2="184" stroke="#e6e5e1"/>
+<text x="369.2307692307692" y="202" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">1.0M</text>
+<line x1="478.84615384615387" y1="76" x2="478.84615384615387" y2="184" stroke="#e6e5e1"/>
+<text x="478.84615384615387" y="202" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">1.5M</text>
+<line x1="588.4615384615385" y1="76" x2="588.4615384615385" y2="184" stroke="#e6e5e1"/>
+<text x="588.4615384615385" y="202" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">2.0M</text>
+<line x1="698.0769230769231" y1="76" x2="698.0769230769231" y2="184" stroke="#e6e5e1"/>
+<text x="698.0769230769231" y="202" font-size="11" fill="#8a8985" font-weight="400" text-anchor="middle">2.5M</text>
+<text x="136" y="110" font-size="13" fill="#0b0b0b" font-weight="500" text-anchor="end">BF16 KV</text>
+<path d="M150 88 h205.53178076923078 a4 4 0 0 1 4 4 v28 a4 4 0 0 1 -4 4 h-205.53178076923078 z" fill="#2a78d6"/>
+<text x="367.53178076923075" y="106" font-size="13" fill="#0b0b0b" font-weight="600" text-anchor="start">955,759</text>
+<text x="367.53178076923075" y="122" font-size="11" fill="#52514e" font-weight="400" text-anchor="start">1.82x of a 512K request</text>
+<text x="136" y="162" font-size="13" fill="#0b0b0b" font-weight="500" text-anchor="end">FP8 KV</text>
+<path d="M150 140 h384.40961923076924 a4 4 0 0 1 4 4 v28 a4 4 0 0 1 -4 4 h-384.40961923076924 z" fill="#eb6834"/>
+<text x="546.4096192307693" y="158" font-size="13" fill="#0b0b0b" font-weight="600" text-anchor="start">1,771,693</text>
+<text x="546.4096192307693" y="174" font-size="11" fill="#52514e" font-weight="400" text-anchor="start">3.38x of a 512K request</text>
+<text x="24" y="236" font-size="11" fill="#8a8985" font-weight="400" text-anchor="start">FP8 pool is 1.85x larger. Source: engine log &#x27;GPU KV cache size&#x27;, results/ and docs/validation.md</text>
+</svg>
